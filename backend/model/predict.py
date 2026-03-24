@@ -1,5 +1,6 @@
 import numpy as np
 import xgboost as xgb
+from sklearn.exceptions import NotFittedError
 from utils.feature_engineering import expand_features
 
 
@@ -25,6 +26,35 @@ def _resolve_scaler(scaler_object):
     raise ValueError("Scaler object is not compatible with transform(X)")
 
 
+def _apply_scaler(scaler, X):
+    try:
+        return scaler.transform(X), None
+    except NotFittedError:
+        # Some legacy artifacts include an unfitted scaler; fallback keeps inference usable.
+        return X, "scaler_not_fitted_used_identity"
+
+
+def _expected_feature_count(model):
+    if hasattr(model, "n_features_in_"):
+        return int(model.n_features_in_)
+    if isinstance(model, xgb.Booster):
+        return int(model.num_features())
+    return None
+
+
+def _align_feature_count(X, expected_count):
+    current_count = X.shape[1]
+    if expected_count is None or current_count == expected_count:
+        return X, None
+
+    if current_count < expected_count:
+        padded = np.pad(X, ((0, 0), (0, expected_count - current_count)), mode="constant")
+        return padded, f"feature_count_padded_{current_count}_to_{expected_count}"
+
+    truncated = X[:, :expected_count]
+    return truncated, f"feature_count_truncated_{current_count}_to_{expected_count}"
+
+
 def predict_rul(models, dataset_type, input_data):
     dataset_type = dataset_type.lower()
     model_key = f"model_{dataset_type}"
@@ -40,7 +70,9 @@ def predict_rul(models, dataset_type, input_data):
 
     X = expand_features(input_data)
     scaler, scaler_variant = _resolve_scaler(scaler_object)
-    X_scaled = scaler.transform(X)
+    X_scaled, scaling_note = _apply_scaler(scaler, X)
+    expected_count = _expected_feature_count(model)
+    X_scaled, feature_note = _align_feature_count(X_scaled, expected_count)
 
     if isinstance(model, xgb.Booster):
         dmatrix = xgb.DMatrix(X_scaled)
@@ -59,5 +91,9 @@ def predict_rul(models, dataset_type, input_data):
 
     if scaler_variant is not None:
         response["scaler_variant"] = scaler_variant
+    if scaling_note is not None:
+        response["preprocessing_note"] = scaling_note
+    if feature_note is not None:
+        response["feature_note"] = feature_note
 
     return response

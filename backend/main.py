@@ -12,6 +12,11 @@ app = FastAPI(title="PrognosAI Predictive Maintenance API", version="1.0.0")
 models = {}
 
 
+DATASET_ALIASES = {
+    "fd0044": "fd004",
+}
+
+
 @app.on_event("startup")
 def startup_event():
     global models
@@ -30,6 +35,11 @@ def _ensure_dataset_supported(dataset):
             },
         )
 
+
+def _normalize_dataset(dataset):
+    normalized = dataset.lower().strip()
+    return DATASET_ALIASES.get(normalized, normalized)
+
 @app.get("/")
 def home():
     return {
@@ -40,7 +50,7 @@ def home():
 
 @app.post("/predict_single")
 def predict_single(input_data: SensorInput):
-    dataset = input_data.dataset.lower()
+    dataset = _normalize_dataset(input_data.dataset)
     features = input_data.features
     _ensure_dataset_supported(dataset)
 
@@ -62,7 +72,7 @@ def predict_single(input_data: SensorInput):
 
 @app.post("/predict_batch")
 def predict_batch(input_data: BatchInput):
-    dataset = input_data.dataset.lower()
+    dataset = _normalize_dataset(input_data.dataset)
     batch = input_data.batch
     _ensure_dataset_supported(dataset)
 
@@ -91,7 +101,7 @@ def predict_batch(input_data: BatchInput):
 
 @app.post("/predict_file/{dataset}")
 def predict_file_batch(dataset: str, file_path: str | None = None):
-    dataset = dataset.lower()
+    dataset = _normalize_dataset(dataset)
     _ensure_dataset_supported(dataset)
 
     try:
@@ -107,7 +117,7 @@ async def predict_csv(
     dataset: str = Form(...),
     file: UploadFile = File(...),
 ):
-    dataset = dataset.lower().strip()
+    dataset = _normalize_dataset(dataset)
     _ensure_dataset_supported(dataset)
 
     if not file.filename or not file.filename.lower().endswith(".csv"):
